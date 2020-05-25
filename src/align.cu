@@ -8,18 +8,16 @@
 
 #define M 3   // match
 #define MM -3 // mismatch
-#define W 2   // linear gap penalty
+#define W -2   // gap score 
 
 /*
-Matrix generation and filling
+Smith-Waterman Alignment of two sequences
 
 Input:
-string1 with length m
-string2 with length n
+seq1 with length m
+seq2 with length n
 
 Algorithm:
-  two sequences A and B of lenths n and m
-
 1. determine the substitution matrix and the gap penalty scheme
     - s(a,b) similarity score of the elements that consituted the two sequences
     - Wk the penalty of a gap that has length k
@@ -27,18 +25,7 @@ Algorithm:
     - size of the scoring matrix is (n+1) * (m+1)
     - Hk0 = H0l = 0 for 0 <= k <= n and 0 <= l <= m
 3. fill the scoring matrix using the eqn below
-
-4. traceback
-  - starting at the highest score in the scoring matrix H and 
-    ending at a matrix cell that has a score of 0, traceback
-    based on the source of each score recursively to generate the best
-    local alignment
-
-Traceback:
-  begin with the highest score, end when 0 is encountered
-
-
-
+    - ...
 4. traceback
   - starting at the highest score in the scoring matrix H and 
     ending at a matrix cell that has a score of 0, traceback
@@ -72,36 +59,61 @@ void rand_seq(int n, char seq[]){
 }
 
 
-// calculate similarity score
-int sim_score(char a, char b){
-  int score;
-  if (a == b){
-    score = M;
-  }
-  else {
-    score = MM;
-  }
-  return score;
-}
-
-
 // filling in the scoring matrix
-void fill(Matrix h, int seqA_len, char seqA[], int seqB_len, char seqB[]){
+void fill(Matrix h, int seqA_len, char seqA[], int seqB_len, char seqB[]) {
 
 	for(int i = 1; i < h.height; i++) {
 	  for(int j = 1; j < h.width; j++) {
-      int id = i*h.width + j;
 
-      int score = 0;
-      h.elements[id] = score;
+      // scores
+      int max_score = 0;
+      int tmp_score;
+      int sim_score;
 
+      // comparison positions
+      int id = i*h.width + j;              // current cell
+      int abov_id = (i-1)*h.width + j;     // above cell
+      int left_id = i*h.width + (j-1);     // left cell
+      int diag_id = (i-1)*h.width + (j-1); // diagonal (above-left) cell
+
+      // diag alignment bases
+      char baseA = seqA[j-1];
+      char baseB = seqB[i-1];
+      if (baseA == baseB){
+        sim_score = M;
+      }
+      else {
+        sim_score = MM;
+      }
+
+      // finding max score
+      // left cell
+      tmp_score = h.elements[left_id] + W;
+      if (tmp_score > max_score){
+        max_score = tmp_score;
+      }
+
+      // above cell
+      tmp_score = h.elements[abov_id] + W;
+      if (tmp_score > max_score){
+        max_score = tmp_score;
+      }
+
+      // diagonal cell
+      tmp_score = h.elements[diag_id] + sim_score;
+      if (tmp_score > max_score){
+        max_score = tmp_score;
+      }
+
+      h.elements[id] = max_score;
     }
   }
 }
 
 
 // traceback
-void traceback(Matrix h){
+// starting at the highest score and ending at the last score get the sequence
+void traceback(Matrix h) {
 
 }
 
@@ -186,7 +198,7 @@ int main(){
   io_score(s2, h, seqA_len, seqA, seqB_len, seqB); 
 
   // traceback
-  traceback(h);
+//  traceback(h);
 
 
 
