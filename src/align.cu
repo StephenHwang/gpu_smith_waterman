@@ -12,26 +12,31 @@
 #define W -2  // gap score
 
 /*
-Smith-Waterman Alignment of two sequences
+Smith-Waterman local alignment of two sequences
 
 Input:
-seq1 with length m
-seq2 with length n
+  seqA with length m
+  seqB with length n
+
+Output:
+  locally aligned seqA and seqB
+  score matrix, h
+  direction matrix, d
 
 Algorithm:
 1. determine the substitution matrix and the gap penalty scheme
     - s(a,b) similarity score of the elements that consituted the two sequences
     - Wk the penalty of a gap that has length k
-2. construct a scoring matrix H and initialize first row and column as 0
-    - size of the scoring matrix is (n+1) * (m+1)
-    - Hk0 = H0l = 0 for 0 <= k <= n and 0 <= l <= m
+2. construct a scoring matrix H
+    - size of the scoring matrix is (n+1) x (m+1)
+    - initialize first row and column as 0
 3. fill the scoring and direction matrix
     - score each left, above, left-above-diagonal cell depending on the gap,
       match, and mismatch penalties, chosing the maximum score
 4. traceback
   - starting at the highest score in the scoring matrix H and
-    ending at a matrix cell that has a score of 0, traceback
-    based to generate the best local alignment
+    ending at a score of 0, traceback the sequence to generate the aligned
+    sequence A and B
 */
 
 // generate random sequence of n length
@@ -112,8 +117,7 @@ void fill(Matrix h, Matrix d, char seqA[], char seqB[], int seqA_len,
   }
 }
 
-// traceback: starting at the highest score and ending at the last score get the
-// sequence
+// traceback: starting at the highest score and ending at a 0 score
 void traceback(Matrix h, Matrix d, char seqA[], char seqB[],
                std::vector<char> &seqA_aligned,
                std::vector<char> &seqB_aligned) {
