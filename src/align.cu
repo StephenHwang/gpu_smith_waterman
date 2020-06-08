@@ -10,37 +10,11 @@
 #define M 3   // match
 #define MM -3 // mismatch
 #define W -2  // gap score
-
-/*
-Smith-Waterman local alignment of two sequences
-
-Input:
-  seqA with length m
-  seqB with length n
-
-Output:
-  locally aligned seqA and seqB
-  score matrix, h
-  direction matrix, d
-
-Algorithm:
-1. determine the substitution matrix and the gap penalty scheme
-    - s(a,b) similarity score of the elements that consituted the two sequences
-    - Wk the penalty of a gap that has length k
-2. construct a scoring matrix H
-    - size of the scoring matrix is (n+1) x (m+1)
-    - initialize first row and column as 0
-3. fill the scoring and direction matrix
-    - score each left, above, left-above-diagonal cell depending on the gap,
-      match, and mismatch penalties, chosing the maximum score
-4. traceback
-  - starting at the highest score in the scoring matrix H and
-    ending at a score of 0, traceback the sequence to generate the aligned
-    sequence A and B
-*/
+#define A_LEN 6 // length of sequence A
+#define B_LEN 6 // length of sequence B
 
 // generate random sequence of n length
-void rand_seq(int n, char seq[]) {
+void seq_gen(int n, char seq[]) {
   int i;
   for (i = 0; i < n; i++) {
     int base = rand() % 4;
@@ -63,8 +37,7 @@ void rand_seq(int n, char seq[]) {
 }
 
 // filling in the scoring matrix
-void fill(Matrix h, Matrix d, char seqA[], char seqB[], int seqA_len,
-          int seqB_len) {
+void fill_cpu(Matrix h, Matrix d, char seqA[], char seqB[]) {
 
   for (int i = 1; i < h.height; i++) {
     for (int j = 1; j < h.width; j++) {
@@ -117,14 +90,27 @@ void fill(Matrix h, Matrix d, char seqA[], char seqB[], int seqA_len,
   }
 }
 
-// traceback: starting at the highest score and ending at a 0 score
-void traceback(Matrix h, Matrix d, char seqA[], char seqB[],
-               std::vector<char> &seqA_aligned,
-               std::vector<char> &seqB_aligned) {
+
+__global__ void fill_gpu(Matrix h, Matrix d, char seqA[], char seqB[]) {
+
+  // pass
+
+}
+
+
+// max reduce algorithm to find index location of maximum score
+__global__ void max_score_gpu(Matrix h) {
+
+  // pass
+
+}
+
+
+// find index location of maximum score
+int max_score_cpu(Matrix h) {
 
   int max_score = 0;
-  int max_i;
-  int max_j;
+  int max_id;
 
   // locating maximum score
   for (int i = 1; i < h.height; i++) {
@@ -132,17 +118,29 @@ void traceback(Matrix h, Matrix d, char seqA[], char seqB[],
       int id = i * h.width + j;
       if (h.elements[id] > max_score) {
         max_score = h.elements[id];
-        max_i = i;
-        max_j = j;
+        max_id = id;
       }
     }
   }
-  std::cout << "Max score: " << max_score << std::endl;
+  std::cout << "Max score of " << max_score;
+  std::cout << " at id: " << max_id << std::endl;
+
+  return max_id;
+}
+
+
+// traceback: starting at the highest score and ending at a 0 score
+void traceback(Matrix d, int max_id, char seqA[], char seqB[],
+               std::vector<char> &seqA_aligned,
+               std::vector<char> &seqB_aligned) {
+
+  int max_i = max_id / d.width;
+  int max_j = max_id % d.width ;
 
   // traceback algorithm from maximum score to 0
   while (max_i > 0 && max_j > 0) {
 
-    int id = max_i * h.width + max_j;
+    int id = max_i * d.width + max_j;
     int dir = d.elements[id];
 
     switch (dir) {
@@ -165,21 +163,20 @@ void traceback(Matrix h, Matrix d, char seqA[], char seqB[],
     case 0:
       max_i = -1;
       max_j = -1;
-      std::cout << "Error: Invalid Direction" << std::endl;
       break;
     }
   }
 }
 
+
 // input output function to visualzie matrix
-void io_score(std::string file, Matrix h, char seqA[], char seqB[],
-              int seqA_len, int seqB_len) {
+void io_score(std::string file, Matrix h, char seqA[], char seqB[]) {
   std::ofstream myfile_tsN;
   myfile_tsN.open(file);
 
   // print seqA
   myfile_tsN << '\t' << '\t';
-  for (int i = 0; i < seqA_len; i++)
+  for (int i = 0; i < A_LEN; i++)
     myfile_tsN << seqA[i] << '\t';
   myfile_tsN << std::endl;
 
@@ -199,82 +196,142 @@ void io_score(std::string file, Matrix h, char seqA[], char seqB[],
   myfile_tsN.close();
 }
 
+
 int main() {
 
+  /* 
+     Generate random sequences of specified length.
+     Initialize cpu and gpu copies of direction and scoring matrices
+  */
+
   // generate sequences
-  int seqA_len = 12;
-  int seqB_len = 12;
-  char seqA[seqA_len];
-  char seqB[seqB_len];
-  rand_seq(seqA_len, seqA);
-  rand_seq(seqB_len, seqB);
+  char seqA[A_LEN];
+  char seqB[B_LEN];
+  seq_gen(A_LEN, seqA);
+  seq_gen(B_LEN, seqB);
 
   // print sequences
-  std::cout << "Seq A with length " << seqA_len << " is: ";
-  for (int i = 0; i <= seqA_len; i++)
+  std::cout << "Seq A with length " << A_LEN << " is: ";
+  for (int i = 0; i <= A_LEN; i++)
     std::cout << seqA[i];
   std::cout << std::endl;
-
-  std::cout << "Seq B with length " << seqB_len << " is: ";
-  for (int i = 0; i <= seqB_len; i++)
+  std::cout << "Seq B with length " << B_LEN << " is: ";
+  for (int i = 0; i <= B_LEN; i++)
     std::cout << seqB[i];
   std::cout << std::endl;
 
-  // initialize cpu matrix and apply initial scores of 0
-  Matrix h(seqA_len + 1, seqB_len + 1); // score matrix
-  Matrix d(seqA_len + 1, seqB_len + 1); // direction matrix
+  // initialize cpu matrices
+  Matrix h1(A_LEN + 1, B_LEN + 1); // score matrix
+  Matrix d1(A_LEN + 1, B_LEN + 1); // direction matrix
 
-  for (int i = 0; i < h.height; i++) {
-    for (int j = 0; j < h.width; j++) {
-      int id = i * h.height + j;
-      h.elements[id] = 0;
-      d.elements[id] = 0;
+  // initialize gpu matrices
+  Matrix h2(A_LEN + 1, B_LEN + 1); // score matrix
+  Matrix d2(A_LEN + 1, B_LEN + 1); // direction matrix
+
+  // apply initial condition of 0
+  for (int i = 0; i < h1.height; i++) {
+    for (int j = 0; j < h1.width; j++) {
+      int id = i * h1.width + j;
+      h1.elements[id] = 0;
+      d1.elements[id] = 0;
+      h2.elements[id] = 0;
+      d2.elements[id] = 0;
     }
   }
 
-  // initialize gpu matrix copy and transfer to device
-//  int Gpu = 1;
-//  Matrix d_h(seqA_len + 1, seqB_len + 1, Gpu);
-//  Matrix d_d(seqA_len + 1, seqB_len + 1, Gpu);
-//  d_h.load(h, Gpu);
-//  d_d.load(h, Gpu);
+  // initialize matrices for gpu
+  int Gpu = 1;
+  Matrix d_h(A_LEN + 1, B_LEN + 1, Gpu);
+  Matrix d_d(A_LEN + 1, B_LEN + 1, Gpu);
+
+  // transfer to device
+  d_h.load(h2, Gpu);
+  d_d.load(d2, Gpu);
 
   // visualize initial scoring matrix
   std::string s1;
   s1 = "init.dat";
-  io_score(s1, h, seqA, seqB, seqA_len, seqB_len);
+  io_score(s1, h1, seqA, seqB);
+
+/////////////////////////////////////////////////////////////////////////////
+
+  /* 
+     Populate the scoring and direction matrix.
+  */
 
   // fill the scoring and direction matrix
-  fill(h, d, seqA, seqB, seqA_len, seqB_len);
+  fill_cpu(h1, d1, seqA, seqB);
 
-  // visualize filled direction and scoring matrix
+  // GPU implementation of filling the scoring and direction matrix
+  // loop over diagonals of the matrix
+  for (int i = 1; i <= ((A_LEN + 1) + (B_LEN+ 1) - 1); i++){
+    int col_idx = std::max(0, (i - (B_LEN +1))); // column index
+    int diag_len = std::min(i, ((A_LEN + 1) - col_idx)); // length of diagonal
+
+//    std::cout << "Column: " << col_idx;
+//    std::cout << ", with len: " << diag_len << std::endl;
+
+    // launch the kernel: one thread by length of diagonal
+    fill_gpu<<<1, diag_len>>>(d_h, d_d, seqA, seqB);
+  }
+
+
+  // print cpu populated direction and scoring matrix
   std::string s2;
   std::string s3;
   s2 = "score.dat";
   s3 = "direction.dat";
-  io_score(s2, h, seqA, seqB, seqA_len, seqB_len);
-  io_score(s3, d, seqA, seqB, seqA_len, seqB_len);
+  io_score(s2, h1, seqA, seqB);
+  io_score(s3, d1, seqA, seqB);
 
-  // optimal alignments
-  std::vector<char> seqA_aligned;
-  std::vector<char> seqB_aligned;
+/////////////////////////////////////////////////////////////////////////////
 
-  // traceback
-  traceback(h, d, seqA, seqB, seqA_aligned, seqB_aligned);
+  /* 
+     Traceback to find optimal alignment.
+  */
+
+  // cpu traceback
+  std::vector<char> seqA_aligned1;
+  std::vector<char> seqB_aligned1;
+
+  int max_id1 = max_score_cpu(h1);
+  traceback(d1, max_id1, seqA, seqB, seqA_aligned1, seqB_aligned1);
+
+
+  // gpu traceback
+//  std::vector<char> seqA_aligned2;
+//  std::vector<char> seqB_aligned2;
+//
+//  size_t size = (A_LEN + 1)*(B_LEN + 1)*sizeof(float);
+//  cudaMemcpy(h2.elements, d_h.elements, size, cudaMemcpyDeviceToHost);  
+//  cudaMemcpy(d2.elements, d_d.elements, size, cudaMemcpyDeviceToHost);  
+//
+//  int max_id2 = max_score_cpu(h1);
+//  traceback(d2, max_id2, seqA, seqB, seqA_aligned2, seqB_aligned2);
+
+/////////////////////////////////////////////////////////////////////////////
 
   // visualize aligned sequences
-  int align_len = seqA_aligned.size();
-  std::cout << std::endl;
-  std::cout << "Aligned sequences A and B: " << std::endl;
+  std::cout << std::endl; // blank line
+  std::cout << "Aligned sub-sequences of A and B: " << std::endl;
+  int align_len = seqA_aligned1.size();
   for (int i = 0; i < align_len + 1; ++i) {
-    std::cout << seqA_aligned[align_len - i];
+    std::cout << seqA_aligned1[align_len - i];
   }
   std::cout << std::endl;
 
   for (int i = 0; i < align_len + 1; ++i) {
-    std::cout << seqB_aligned[align_len - i];
+    std::cout << seqB_aligned1[align_len - i];
   }
   std::cout << std::endl;
+
+  // deallocate memory
+  h1.cpu_deallocate();
+  d1.cpu_deallocate();
+  h2.cpu_deallocate();
+  d2.cpu_deallocate();
+  d_h.gpu_deallocate(); 
+  d_d.gpu_deallocate();
 
   return 0;
 }
