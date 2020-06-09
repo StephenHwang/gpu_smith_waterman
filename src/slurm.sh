@@ -13,4 +13,4 @@
 #SBATCH --account=am-148-s20 
 
 module load cuda10.0
-/home/sjhwang/finalProject/seq_assembly/src.align.exe
+/home/sjhwang/finalProject/seq_assembly/src/align.exe
