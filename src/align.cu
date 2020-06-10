@@ -10,10 +10,10 @@
 #define M 3   // match
 #define MM -3 // mismatch
 #define W -2  // gap score
-#define A_LEN 12 // length of sequence A
-#define B_LEN 12 // length of sequence B
-#define maximum(a,b) (((a)>(b))?(a):(b))
-#define minimum(a,b) (((a)<(b))?(a):(b))
+#define A_LEN 32 // length of sequence A
+#define B_LEN 32 // length of sequence B
+#define max(a,b) (((a)>(b))?(a):(b))
+#define min(a,b) (((a)<(b))?(a):(b))
 
 // Forward declarations of kernels and functions
 void seq_gen(int n, char seq[]);
@@ -103,32 +103,6 @@ void fill_cpu(Matrix h, Matrix d, char seqA[], char seqB[]) {
 }
 
 
-/*
-
-A simple alternative is constructing a single kernel function in charge of calculating all the anti-diagonals. 
-This kernel should be launched with a number of threads at least equal to the longest anti-diagonal.
-The kernel performs a number of iterations equal to the number of anti-diagonals to be calculated.
-For anti-diagonals shorter than the longest one, only a subset of threads remains active.
-
-*/
-
-//__device__ int calc_fill(float x, float mu, float sig) {
-//  int max = 0;
-//  return max;
-//}
-//
-//// parallelize across anti-diagonal to fill scoring and direction matrix
-//__global__ void fill_gpu(Matrix h, Matrix d, char seqA[], char seqB[]) {
-//
-//  for (int diag = 0; diag < ((A_LEN+1) + (B_LEN+1) - 1); diag++) {
-//    // calculate diag
-//
-//    __syncthreads();
-//  }
-//
-//}
-
-
 __global__ void naive_fill_gpu(Matrix h, Matrix d, char seqA[], char seqB[], const int *k) {
 
   // scores
@@ -137,12 +111,12 @@ __global__ void naive_fill_gpu(Matrix h, Matrix d, char seqA[], char seqB[], con
   int tmp_score;
   int sim_score;
 
-  int j = threadIdx.x + 1;
+  // row and column index depending on anti-diagonal
+  int i = threadIdx.x + 1;
   if (*k > A_LEN + 1) {
-    j += (*k - A_LEN);
+    i += (*k - A_LEN);
   }
-
-  int i = ((*k)-j)+1;
+  int j = ((*k)-i)+1;
 
   // comparison positions
   int id = i * h.width + j;
@@ -182,7 +156,6 @@ __global__ void naive_fill_gpu(Matrix h, Matrix d, char seqA[], char seqB[], con
   // assign scores and direction
   h.elements[id] = max_score;
   d.elements[id] = direction;
-
 }
 
 
@@ -250,7 +223,7 @@ void traceback(Matrix d, int max_id, char seqA[], char seqB[],
 
 
 // print aligned sequnces
-void s_seq(std::vector<char> &seqA_aligned, std::vector<char> &seqB_aligned) {
+void io_seq(std::vector<char> &seqA_aligned, std::vector<char> &seqB_aligned) {
 
   std::cout << "Aligned sub-sequences of A and B: " << std::endl;
   int align_len = seqA_aligned.size();
@@ -294,11 +267,6 @@ void io_score(std::string file, Matrix h, char seqA[], char seqB[]) {
 
 
 int main() {
-
-  /* 
-     Generate random sequences of specified length.
-     Initialize cpu and gpu copies of direction and scoring matrices
-  */
 
   // generate sequences
   char seqA[A_LEN];
@@ -353,11 +321,32 @@ int main() {
 
 /////////////////////////////////////////////////////////////////////////////
 
-  /* 
-     Populate the scoring and direction matrix.
-  */
+  // working cpu
+  fill_cpu(h1, d1, seqA, seqB);
 
-  // GPU naive
+  // cpu traceback
+  std::cout << "CPU result: " << std::endl;
+  std::vector<char> seqA_aligned1;
+  std::vector<char> seqB_aligned1;
+  int max_id1 = max_score_cpu(h1);
+  traceback(d1, max_id1, seqA, seqB, seqA_aligned1, seqB_aligned1);
+
+  // visualize aligned sequences
+  io_seq(seqA_aligned1, seqB_aligned1);
+  std::cout << std::endl;
+
+  // print cpu populated direction and scoring matrix
+  std::string s2;
+  std::string s3;
+  s2 = "score.dat";
+  s3 = "direction.dat";
+  io_score(s2, h1, seqA, seqB);
+  io_score(s3, d1, seqA, seqB);
+
+
+/////////////////////////////////////////////////////////////////////////////
+
+  // naive GPU
   int *d_i;
   cudaMalloc((void**)&d_i, sizeof(int));
 
@@ -371,12 +360,11 @@ int main() {
 
   // looping over diagonals of the matrix
   for (int i = 1; i <= ((A_LEN + 1) + (B_LEN+ 1) - 1); i++){
-    int col_idx = maximum(0, (i - (B_LEN +1))); // column index
-    int diag_len = minimum(i, ((A_LEN + 1) - col_idx)); // length of diagonal
+    int col_idx = max(0, (i - (B_LEN +1))); // column index
+    int diag_len = min(i, ((A_LEN + 1) - col_idx)); // length of diagonal
 
-//    std::cout << "Index: " << i;
-//    std::cout << ", Column: " << col_idx;
-//    std::cout << ", with len: " << diag_len << std::endl;
+    std::cout << "Index: " << i << ", Column: " << col_idx;
+    std::cout << ", with len: " << diag_len << std::endl;
 
     // launch the kernel: one block with length of diagonal
     cudaMemcpy(d_i, &i, sizeof(int), cudaMemcpyHostToDevice);
@@ -384,37 +372,7 @@ int main() {
     cudaDeviceSynchronize();
   }
 
-
-  // working cpu
-  fill_cpu(h1, d1, seqA, seqB);
-  // print cpu populated direction and scoring matrix
-  std::string s2;
-  std::string s3;
-  s2 = "score.dat";
-  s3 = "direction.dat";
-  io_score(s2, h1, seqA, seqB);
-  io_score(s3, d1, seqA, seqB);
-
-// ideal gpu non naive: single kernel non-naive ideal version  
-//  fill_gpu<<<1, ((A_LEN + 1) + (B_LEN+ 1) - 1)>>>(d_h, d_d, seqA, seqB);
-/////////////////////////////////////////////////////////////////////////////
-
-  /* 
-     Traceback to find optimal alignment.
-  */
-
-  // cpu traceback
-  std::cout << "CPU result: " << std::endl;
-  std::vector<char> seqA_aligned1;
-  std::vector<char> seqB_aligned1;
-  int max_id1 = max_score_cpu(h1);
-  traceback(d1, max_id1, seqA, seqB, seqA_aligned1, seqB_aligned1);
-  // visualize aligned sequences
-  s_seq(seqA_aligned1, seqB_aligned1);
-  std::cout << std::endl;
-
-
-  // gpu traceback //
+  // gpu traceback
   std::cout << "GPU result: " << std::endl;
   std::vector<char> seqA_aligned2;
   std::vector<char> seqB_aligned2;
@@ -433,17 +391,21 @@ int main() {
 
   int max_id2 = max_score_cpu(h2);
   traceback(d2, max_id2, seqA, seqB, seqA_aligned2, seqB_aligned2);
-  s_seq(seqA_aligned2, seqB_aligned2);
+  io_seq(seqA_aligned2, seqB_aligned2);
+
 
 /////////////////////////////////////////////////////////////////////////////
 
-  // deallocate memory
+  // deallocate cpu and gpu memory
   h1.cpu_deallocate();
   d1.cpu_deallocate();
   h2.cpu_deallocate();
   d2.cpu_deallocate();
+
   d_h.gpu_deallocate(); 
   d_d.gpu_deallocate();
+  cudaFree(d_seqA);
+  cudaFree(d_seqB);
 
   return 0;
 }
