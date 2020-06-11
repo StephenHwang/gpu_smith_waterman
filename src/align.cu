@@ -1,24 +1,22 @@
 #include "mat.h"
-#include <cmath>
-#include <ctime>
+#include <chrono>
 #include <fstream>
 #include <iostream>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string>
 #include <vector>
 
-#define M 3        // match
-#define MM -3      // mismatch
-#define W -2       // gap score
-#define A_LEN 32 // length of sequence A
-#define B_LEN 32 // length of sequence B
+#define M 3      // match
+#define MM -3    // mismatch
+#define W -2     // gap score
+#define A_LEN 12 // length of sequence A
+#define B_LEN 12 // length of sequence B
 #define max(a, b) (((a) > (b)) ? (a) : (b))
 #define min(a, b) (((a) < (b)) ? (a) : (b))
 
-// Forward declarations of scoring kernels
-__global__ void fill_gpu_naive(Matrix h, Matrix d, char seqA[], char seqB[],
-                               const int *k);
+// Forward declarations of scoring kernel
+__global__ void fill_gpu(Matrix h, Matrix d, char seqA[], char seqB[],
+                         const int *k);
 
 // generate random sequence of length n
 void seq_gen(int n, char seq[]) {
@@ -42,7 +40,6 @@ void seq_gen(int n, char seq[]) {
   }
 }
 
-//void fill_cpu(Matrix h, Matrix d, char seqA[], char seqB[]) {
 int fill_cpu(Matrix h, Matrix d, char seqA[], char seqB[]) {
 
   int full_max_id = 0;
@@ -99,18 +96,17 @@ int fill_cpu(Matrix h, Matrix d, char seqA[], char seqB[]) {
       if (max_score > full_max_val) {
         full_max_id = id;
         full_max_val = max_score;
-
       }
     }
   }
-  
+
   std::cout << "Max score of " << full_max_val;
   std::cout << " at id: " << full_max_id << std::endl;
   return full_max_id;
 }
 
-__global__ void fill_gpu_naive(Matrix h, Matrix d, char seqA[], char seqB[],
-                               const int *k, int max_id_val[]) {
+__global__ void fill_gpu(Matrix h, Matrix d, char seqA[], char seqB[],
+                         const int *k, int max_id_val[]) {
 
   // scores
   int max_score = 0;
@@ -145,7 +141,7 @@ __global__ void fill_gpu_naive(Matrix h, Matrix d, char seqA[], char seqB[],
     direction = 2;
   }
 
-  // diagonal cell (preferred)
+  // similarity score for diagonal cell
   char baseA = seqA[j - 1];
   char baseB = seqB[i - 1];
   if (baseA == baseB) {
@@ -154,6 +150,7 @@ __global__ void fill_gpu_naive(Matrix h, Matrix d, char seqA[], char seqB[],
     sim_score = MM;
   }
 
+  // diagonal cell (preferred)
   tmp_score = h.elements[diag_id] + sim_score;
   if (tmp_score >= max_score) {
     max_score = tmp_score;
@@ -164,13 +161,14 @@ __global__ void fill_gpu_naive(Matrix h, Matrix d, char seqA[], char seqB[],
   h.elements[id] = max_score;
   d.elements[id] = direction;
 
+  // save max score and position
   if (max_score > max_id_val[1]) {
     max_id_val[0] = id;
     max_id_val[1] = max_score;
   }
 }
 
-// find index location of maximum score
+// cpu finding index location of maximum score
 int max_score_cpu(Matrix h) {
 
   int max_score = 0;
@@ -234,13 +232,15 @@ void traceback(Matrix d, int max_id, char seqA[], char seqB[],
 // print aligned sequnces
 void io_seq(std::vector<char> &seqA_aligned, std::vector<char> &seqB_aligned) {
 
-  std::cout << "Aligned sub-sequences of A and B: " << std::endl;
+  std::cout << "   Aligned sub-sequences of A and B: " << std::endl;
   int align_len = seqA_aligned.size();
+  std::cout << "      ";
   for (int i = 0; i < align_len + 1; ++i) {
     std::cout << seqA_aligned[align_len - i];
   }
   std::cout << std::endl;
 
+  std::cout << "      ";
   for (int i = 0; i < align_len + 1; ++i) {
     std::cout << seqB_aligned[align_len - i];
   }
@@ -273,7 +273,7 @@ void io_score(std::string file, Matrix h, char seqA[], char seqB[]) {
   myfile_tsN.close();
 }
 
-void smith_water_CPU(Matrix h, Matrix d, char seqA[], char seqB[]) {
+void smith_water_cpu(Matrix h, Matrix d, char seqA[], char seqB[]) {
   std::cout << "CPU result: " << std::endl;
 
   // populate scoring and direction matrix and find id of max score
@@ -292,7 +292,8 @@ void smith_water_CPU(Matrix h, Matrix d, char seqA[], char seqB[]) {
   io_score(std::string("direction.dat"), d, seqA, seqB);
 }
 
-void smith_water_GPU_naive(Matrix h, Matrix d, char seqA[], char seqB[]) {
+void smith_water_gpu(Matrix h, Matrix d, char seqA[], char seqB[]) {
+  std::cout << "GPU result: " << std::endl;
 
   // allocate and transfer sequence data to device
   char *d_seqA, *d_seqB;
@@ -312,19 +313,12 @@ void smith_water_GPU_naive(Matrix h, Matrix d, char seqA[], char seqB[]) {
   int *d_i;
   cudaMalloc(&d_i, sizeof(int));
 
-  // timing
-  cudaEvent_t start, stop;
-  float time;
-  cudaEventCreate(&start);
-  cudaEventCreate(&stop);
-  cudaEventRecord(start, 0);
-
   // max id and value
-	int *d_max_id_val;  // create pointers and device
-	std::vector<int> h_max_id_val(2, 0); // allocate and initialize mem on host
-
-	cudaMalloc(&d_max_id_val, 2*sizeof(int)); // allocate memory on GPU
-	cudaMemcpy(d_max_id_val, h_max_id_val.data(), 2*sizeof(int), cudaMemcpyHostToDevice);
+  int *d_max_id_val;                   // create pointers and device
+  std::vector<int> h_max_id_val(2, 0); // allocate and initialize mem on host
+  cudaMalloc(&d_max_id_val, 2 * sizeof(int)); // allocate memory on GPU
+  cudaMemcpy(d_max_id_val, h_max_id_val.data(), 2 * sizeof(int),
+             cudaMemcpyHostToDevice);
 
   // loop over diagonals of the matrix
   for (int i = 1; i <= ((A_LEN + 1) + (B_LEN + 1) - 1); i++) {
@@ -333,45 +327,38 @@ void smith_water_GPU_naive(Matrix h, Matrix d, char seqA[], char seqB[]) {
 
     // launch the kernel: one block by length of diagonal
     cudaMemcpy(d_i, &i, sizeof(int), cudaMemcpyHostToDevice);
-    fill_gpu_naive<<<1, diag_len>>>(d_h, d_d, d_seqA, d_seqB, d_i, d_max_id_val);
+    fill_gpu<<<1, diag_len>>>(d_h, d_d, d_seqA, d_seqB, d_i, d_max_id_val);
     cudaDeviceSynchronize();
   }
 
-  // gpu traceback //
-  std::cout << "GPU result: " << std::endl;
-  std::vector<char> seqA_aligned;
-  std::vector<char> seqB_aligned;
-
   // copy data back
   size_t size = (A_LEN + 1) * (B_LEN + 1) * sizeof(float);
-//  cudaMemcpy(h.elements, d_h.elements, size, cudaMemcpyDeviceToHost);
   cudaMemcpy(d.elements, d_d.elements, size, cudaMemcpyDeviceToHost);
-	cudaMemcpy(h_max_id_val.data(), d_max_id_val, 2*sizeof(int), cudaMemcpyDeviceToHost);
-  std::cout << "Max score of " << h_max_id_val[1] << " at " << h_max_id_val[0] << std::endl;
+  cudaMemcpy(h.elements, d_h.elements, size, cudaMemcpyDeviceToHost);
+  cudaMemcpy(h_max_id_val.data(), d_max_id_val, 2 * sizeof(int),
+             cudaMemcpyDeviceToHost);
 
-//  int max_id = max_score_cpu(h);
   int max_id = h_max_id_val[0];
-  traceback(d, max_id, seqA, seqB, seqA_aligned, seqB_aligned);
+  std::cout << "   Max score of " << h_max_id_val[1] << " at " << max_id
+            << std::endl;
 
-  cudaEventRecord(stop, 0);
-  cudaEventSynchronize(stop);
-  cudaEventElapsedTime(&time, start, stop);
-  std::cout << "   Naive GPU time = " << time << " ms" << std::endl;
+  // traceback
+  std::vector<char> seqA_aligned;
+  std::vector<char> seqB_aligned;
+  traceback(d, max_id, seqA, seqB, seqA_aligned, seqB_aligned);
 
   // visualize output
   io_seq(seqA_aligned, seqB_aligned);
-  std::string s4;
-  std::string s5;
-  s4 = "score_gpu.dat";
-  s5 = "direction_gpu.dat";
-  io_score(s4, h, seqA, seqB);
-  io_score(s5, d, seqA, seqB);
+
+  io_score(std::string("score_gpu.dat"), h, seqA, seqB);
+  io_score(std::string("direction_gpu.dat"), d, seqA, seqB);
 
   d_h.gpu_deallocate();
   d_d.gpu_deallocate();
   cudaFree(d_seqA);
   cudaFree(d_seqB);
-	cudaFree(d_max_id_val);
+  cudaFree(d_i);
+  cudaFree(d_max_id_val);
 }
 
 int main() {
@@ -394,41 +381,52 @@ int main() {
   std::cout << std::endl;
 
   // initialize scoring and direction matrices
-  Matrix h1(A_LEN + 1, B_LEN + 1); // score matrix for cpu
-  Matrix d1(A_LEN + 1, B_LEN + 1); // direction matrix for cpu
-  Matrix h2(A_LEN + 1, B_LEN + 1); // score matrix for gpu naive
-  Matrix d2(A_LEN + 1, B_LEN + 1); // direction matrix for gpu naive
+  Matrix scr_cpu(A_LEN + 1, B_LEN + 1); // cpu score matrix
+  Matrix dir_cpu(A_LEN + 1, B_LEN + 1); // cpu direction
+  Matrix scr_gpu(A_LEN + 1, B_LEN + 1); // gpu score matrix
+  Matrix dir_gpu(A_LEN + 1, B_LEN + 1); // gpu direction matrix
 
   // apply initial condition of 0
-  for (int i = 0; i < h1.height; i++) {
-    for (int j = 0; j < h1.width; j++) {
-      int id = i * h1.width + j;
-      h1.elements[id] = 0;
-      d1.elements[id] = 0;
-      h2.elements[id] = 0;
-      d2.elements[id] = 0;
+  for (int i = 0; i < scr_cpu.height; i++) {
+    for (int j = 0; j < scr_cpu.width; j++) {
+      int id = i * scr_cpu.width + j;
+      scr_cpu.elements[id] = 0;
+      dir_cpu.elements[id] = 0;
+      scr_gpu.elements[id] = 0;
+      dir_gpu.elements[id] = 0;
     }
   }
 
   // visualize initial scoring matrix
-  io_score(std::string("init.dat"), h1, seqA, seqB);
+  io_score(std::string("init.dat"), scr_cpu, seqA, seqB);
 
   // CPU
-  clock_t begin = clock();
-  smith_water_CPU(h1, d1, seqA, seqB);
-  clock_t end = clock();
-  double cpu = double(end - begin) / (CLOCKS_PER_SEC * 12);
-  std::cout << "   CPU time = " << cpu * 1000 << " ms" << std::endl;
+  auto start_cpu = std::chrono::steady_clock::now();
+  smith_water_cpu(scr_cpu, dir_cpu, seqA, seqB); // call CPU smith water
+  auto end_cpu = std::chrono::steady_clock::now();
+  auto diff = end_cpu - start_cpu;
+  std::cout << "   CPU time = "
+            << std::chrono::duration<double, std::milli>(diff).count() << " ms"
+            << std::endl;
   std::cout << std::endl;
 
-  // naive GPU
-  smith_water_GPU_naive(h2, d2, seqA, seqB);
+  // GPU
+  cudaEvent_t start, stop;
+  float time;
+  cudaEventCreate(&start);
+  cudaEventCreate(&stop);
+  cudaEventRecord(start, 0);
+  smith_water_gpu(scr_gpu, dir_gpu, seqA, seqB); // call GPU smith water
+  cudaEventRecord(stop, 0);
+  cudaEventSynchronize(stop);
+  cudaEventElapsedTime(&time, start, stop);
+  std::cout << "   GPU time = " << time << " ms" << std::endl;
 
   // deallocate memory
-  h1.cpu_deallocate();
-  d1.cpu_deallocate();
-  h2.cpu_deallocate();
-  d2.cpu_deallocate();
+  scr_cpu.cpu_deallocate();
+  dir_cpu.cpu_deallocate();
+  scr_gpu.cpu_deallocate();
+  dir_gpu.cpu_deallocate();
 
   return 0;
 }
