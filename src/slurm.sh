@@ -1,6 +1,6 @@
 #!/bin/bash
-# sequence alignment
-#SBATCH --job-name=s_align
+# smith waterman sequence alignment
+#SBATCH --job-name=sw
 #SBATCH --mail-type=FAIL
 #SBATCH --mail-user=sjhwang@ucsc.edu
 #SBATCH --output=matvec_%j.out

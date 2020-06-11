@@ -16,11 +16,11 @@
 #define max(a, b) (((a) > (b)) ? (a) : (b))
 #define min(a, b) (((a) < (b)) ? (a) : (b))
 
-// Forward declarations of scoring fill kernels and functions
+// Forward declarations of scoring kernels
 __global__ void fill_gpu_naive(Matrix h, Matrix d, char seqA[], char seqB[],
                                const int *k);
 
-// generate random sequence of n length
+// generate random sequence of length n
 void seq_gen(int n, char seq[]) {
   int i;
   for (i = 0; i < n; i++) {
@@ -42,8 +42,12 @@ void seq_gen(int n, char seq[]) {
   }
 }
 
-// filling in the scoring matrix
-void fill_cpu(Matrix h, Matrix d, char seqA[], char seqB[]) {
+//void fill_cpu(Matrix h, Matrix d, char seqA[], char seqB[]) {
+int fill_cpu(Matrix h, Matrix d, char seqA[], char seqB[]) {
+
+  int full_max_id = 0;
+  int full_max_val = 0;
+
   for (int i = 1; i < h.height; i++) {
     for (int j = 1; j < h.width; j++) {
 
@@ -91,12 +95,22 @@ void fill_cpu(Matrix h, Matrix d, char seqA[], char seqB[]) {
       // assign scores and direction
       h.elements[id] = max_score;
       d.elements[id] = direction;
+
+      if (max_score > full_max_val) {
+        full_max_id = id;
+        full_max_val = max_score;
+
+      }
     }
   }
+  
+  std::cout << "Max score of " << full_max_val;
+  std::cout << " at id: " << full_max_id << std::endl;
+  return full_max_id;
 }
 
 __global__ void fill_gpu_naive(Matrix h, Matrix d, char seqA[], char seqB[],
-                               const int *k) {
+                               const int *k, int max_id_val[]) {
 
   // scores
   int max_score = 0;
@@ -149,6 +163,11 @@ __global__ void fill_gpu_naive(Matrix h, Matrix d, char seqA[], char seqB[],
   // assign scores and direction
   h.elements[id] = max_score;
   d.elements[id] = direction;
+
+  if (max_score > max_id_val[1]) {
+    max_id_val[0] = id;
+    max_id_val[1] = max_score;
+  }
 }
 
 // find index location of maximum score
@@ -257,17 +276,16 @@ void io_score(std::string file, Matrix h, char seqA[], char seqB[]) {
 void smith_water_CPU(Matrix h, Matrix d, char seqA[], char seqB[]) {
   std::cout << "CPU result: " << std::endl;
 
-  // populate scoring matrix
-  fill_cpu(h, d, seqA, seqB);
+  // populate scoring and direction matrix and find id of max score
+  int max_id = fill_cpu(h, d, seqA, seqB);
 
   // traceback
   std::vector<char> seqA_aligned;
   std::vector<char> seqB_aligned;
-  int max_id = max_score_cpu(h);
   traceback(d, max_id, seqA, seqB, seqA_aligned, seqB_aligned);
 
   // print aligned sequences
-  //  io_seq(seqA_aligned, seqB_aligned);
+  io_seq(seqA_aligned, seqB_aligned);
 
   // print cpu populated direction and scoring matrix
   io_score(std::string("score.dat"), h, seqA, seqB);
@@ -290,6 +308,7 @@ void smith_water_GPU_naive(Matrix h, Matrix d, char seqA[], char seqB[]) {
   d_h.load(h, Gpu);
   d_d.load(d, Gpu);
 
+  // device index
   int *d_i;
   cudaMalloc(&d_i, sizeof(int));
 
@@ -300,6 +319,13 @@ void smith_water_GPU_naive(Matrix h, Matrix d, char seqA[], char seqB[]) {
   cudaEventCreate(&stop);
   cudaEventRecord(start, 0);
 
+  // max id and value
+	int *d_max_id_val;  // create pointers and device
+	std::vector<int> h_max_id_val(2, 0); // allocate and initialize mem on host
+
+	cudaMalloc(&d_max_id_val, 2*sizeof(int)); // allocate memory on GPU
+	cudaMemcpy(d_max_id_val, h_max_id_val.data(), 2*sizeof(int), cudaMemcpyHostToDevice);
+
   // loop over diagonals of the matrix
   for (int i = 1; i <= ((A_LEN + 1) + (B_LEN + 1) - 1); i++) {
     int col_idx = max(0, (i - (B_LEN + 1)));
@@ -307,21 +333,24 @@ void smith_water_GPU_naive(Matrix h, Matrix d, char seqA[], char seqB[]) {
 
     // launch the kernel: one block by length of diagonal
     cudaMemcpy(d_i, &i, sizeof(int), cudaMemcpyHostToDevice);
-    fill_gpu_naive<<<1, diag_len>>>(d_h, d_d, d_seqA, d_seqB, d_i);
+    fill_gpu_naive<<<1, diag_len>>>(d_h, d_d, d_seqA, d_seqB, d_i, d_max_id_val);
     cudaDeviceSynchronize();
   }
 
-  // gpu traceback
+  // gpu traceback //
   std::cout << "GPU result: " << std::endl;
   std::vector<char> seqA_aligned;
   std::vector<char> seqB_aligned;
 
   // copy data back
   size_t size = (A_LEN + 1) * (B_LEN + 1) * sizeof(float);
-  cudaMemcpy(h.elements, d_h.elements, size, cudaMemcpyDeviceToHost);
+//  cudaMemcpy(h.elements, d_h.elements, size, cudaMemcpyDeviceToHost);
   cudaMemcpy(d.elements, d_d.elements, size, cudaMemcpyDeviceToHost);
+	cudaMemcpy(h_max_id_val.data(), d_max_id_val, 2*sizeof(int), cudaMemcpyDeviceToHost);
+  std::cout << "Max score of " << h_max_id_val[1] << " at " << h_max_id_val[0] << std::endl;
 
-  int max_id = max_score_cpu(h);
+//  int max_id = max_score_cpu(h);
+  int max_id = h_max_id_val[0];
   traceback(d, max_id, seqA, seqB, seqA_aligned, seqB_aligned);
 
   cudaEventRecord(stop, 0);
@@ -330,7 +359,7 @@ void smith_water_GPU_naive(Matrix h, Matrix d, char seqA[], char seqB[]) {
   std::cout << "   Naive GPU time = " << time << " ms" << std::endl;
 
   // visualize output
-  //  io_seq(seqA_aligned, seqB_aligned);
+  io_seq(seqA_aligned, seqB_aligned);
   std::string s4;
   std::string s5;
   s4 = "score_gpu.dat";
@@ -342,6 +371,7 @@ void smith_water_GPU_naive(Matrix h, Matrix d, char seqA[], char seqB[]) {
   d_d.gpu_deallocate();
   cudaFree(d_seqA);
   cudaFree(d_seqB);
+	cudaFree(d_max_id_val);
 }
 
 int main() {
