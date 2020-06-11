@@ -9,8 +9,8 @@
 #define M 3      // match
 #define MM -3    // mismatch
 #define W -2     // gap score
-#define A_LEN 12 // length of sequence A
-#define B_LEN 12 // length of sequence B
+#define A_LEN 64 // length of sequence A
+#define B_LEN 64 // length of sequence B
 #define max(a, b) (((a) > (b)) ? (a) : (b))
 #define min(a, b) (((a) < (b)) ? (a) : (b))
 
@@ -285,7 +285,7 @@ void smith_water_cpu(Matrix h, Matrix d, char seqA[], char seqB[]) {
   traceback(d, max_id, seqA, seqB, seqA_aligned, seqB_aligned);
 
   // print aligned sequences
-  io_seq(seqA_aligned, seqB_aligned);
+//  io_seq(seqA_aligned, seqB_aligned);
 
   // print cpu populated direction and scoring matrix
   io_score(std::string("score.dat"), h, seqA, seqB);
@@ -348,7 +348,7 @@ void smith_water_gpu(Matrix h, Matrix d, char seqA[], char seqB[]) {
   traceback(d, max_id, seqA, seqB, seqA_aligned, seqB_aligned);
 
   // visualize output
-  io_seq(seqA_aligned, seqB_aligned);
+//  io_seq(seqA_aligned, seqB_aligned);
 
   io_score(std::string("score_gpu.dat"), h, seqA, seqB);
   io_score(std::string("direction_gpu.dat"), d, seqA, seqB);
