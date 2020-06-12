@@ -1,3 +1,7 @@
 # Smith-Waterman Local Sequence Alignment
 
-Sequence alignment is an important task in bioinformatics used to identify regions of conservation between two sequences. The Smith-Waterman local sequence alignment algorithm is one of the original sequence alignment algorithms, but its O(mn) complexity poses practical issues with larger sequences. Altering the Smith-Waterman algorithm, can allow it to be ran parallel utilizing modern GPU architecture resulting in increased performance over the original sequential CPU algorithm.
+A CUDA C++/C++  Smith-Waterman local alignment algorithm for parallel computation across Nvidia GPUs.
+
+## Sequence Alignment
+The Smith-Waterman local alignment algorithm is a dynamic programming approach to identify regions of similarity across a pair of sequences. Due to its O(mn) complexity, Smith-Waterman suffers with large sequence length. Here I alter the original Smith-Waterman algorithm and parallelize computation of elements within diagonals of the scoring matrix to increase performance.
+
